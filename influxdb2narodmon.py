@@ -9,7 +9,7 @@ import hashlib
 
 import influxdb
 
-__version__ = '0.1'
+__version__ = '0.1.2'
 
 # see setup at the end of the file
 
@@ -85,7 +85,7 @@ def main():
     user = os.getenv('INFLUXDB_USER', 'root')
     password = os.getenv('INFLUXDB_PASSWORD')
 
-    cmd = sys.argv[1] if len(sys.argv) > 0 else 'send'
+    cmd = sys.argv[1] if len(sys.argv) > 1 else 'send'
     if cmd == 'send':
         try:
             client = influxdb.InfluxDBClient(host, port, user, password)
