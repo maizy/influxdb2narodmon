@@ -5,20 +5,19 @@ import collections
 import sys
 from uuid import getnode
 import socket
-import hashlib
 
 import influxdb
 
-__version__ = '0.1.2'
+__version__ = '0.1.3'
 
 # see setup at the end of the file
 
-Metric = collections.namedtuple('Measurement', ['database', 'measurement', 'field', 'nm_metric_type'])
+Metric = collections.namedtuple('Measurement', ['nm_metric_id', 'database', 'measurement', 'field'])
 
 
 def send_metrics(mac, metrics, influxdb_client, time_range, narodmon_host='narodmon.ru', narodmon_port=8283):
 
-    results = {}
+    results = collections.OrderedDict()
     for metric in metrics:
         query = 'select mean("{f}") as "value" from "{m}" where time > now() - {r}'.format(
             f=_quote_itentifier(metric.field),
@@ -37,12 +36,11 @@ def send_metrics(mac, metrics, influxdb_client, time_range, narodmon_host='narod
 
         lines = ['#{}'.format(mac)]
         for metric, value in results.items():
-            metric_id = _metric_id(metric)
             if isinstance(value, float):
                 value = '{:0.4f}'.format(value)
             else:
                 value = str(value)
-            lines.append('#{mac}{id}#{value}'.format(mac=mac, id=metric_id, value=value))
+            lines.append('#{mac}{id}#{value}'.format(mac=mac, id=metric.nm_metric_id, value=value))
         lines.append('##')
 
         data = '\n'.join(lines)
@@ -62,19 +60,14 @@ def _quote_itentifier(value):
     return value.replace('"', '\\"')
 
 
-def _metric_id(metric):
-    hash_ = hashlib.sha1('|'.join((metric.database, metric.measurement, metric.field)).encode('utf-8'))
-    return (hash_.hexdigest())[0:4]
-
-
 def main():
     # mac - some uniq sequince of [a-z0-9]
     mac = os.getenv('MAC', '{:012x}'.format(getnode())[0:12])
 
     metrics = [
-        Metric(database='weather', measurement='weather', field='humidity', nm_metric_type='H1'),
-        Metric(database='weather', measurement='weather', field='pressure', nm_metric_type='P1'),
-        Metric(database='weather', measurement='weather', field='temperature', nm_metric_type='T1'),
+        Metric(nm_metric_id='H1', database='weather', measurement='weather', field='humidity'),
+        Metric(nm_metric_id='P1', database='weather', measurement='weather', field='pressure'),
+        Metric(nm_metric_id='T1', database='weather', measurement='weather', field='temperature'),
     ]
 
     time_range = '5m'
@@ -100,8 +93,8 @@ def main():
 
         print('Metrics:')
         for metric in metrics:
-            id_ = _metric_id(metric)
-            print(' * {}: {}'.format(id_, metric))
+            print(' * {}: {}'.format(metric.nm_metric_id, metric))
+
 
 if __name__ == '__main__':
     main()
