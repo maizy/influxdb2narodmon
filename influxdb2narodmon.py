@@ -47,9 +47,11 @@ def send_measurements(mac, metrics, influxdb_client, time_range, narodmon_host='
 
         data = '\n'.join(lines)
         sock.send(data.encode('utf-8'))
-        response = sock.recv(1024)
+        response = sock.recv(1024).decode('utf-8').rstrip()
         sock.close()
-        print(response)
+        if response != 'OK':
+            sys.stderr.write('Unseccessfull response: {}\n'.format(response))
+            return False
     except socket.error as e:
         sys.stderr.write('Unable to write data to narodmon\n{}\n'.format(e))
         return False
