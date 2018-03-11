@@ -16,7 +16,7 @@ __version__ = '0.1'
 Metric = collections.namedtuple('Measurement', ['database', 'measurement', 'field', 'nm_metric_type'])
 
 
-def send_measurements(mac, metrics, influxdb_client, time_range, narodmon_host='narodmon.ru', narodmon_port=8283):
+def send_metrics(mac, metrics, influxdb_client, time_range, narodmon_host='narodmon.ru', narodmon_port=8283):
 
     results = {}
     for metric in metrics:
@@ -63,16 +63,15 @@ def _quote_itentifier(value):
 
 
 def _metric_id(metric):
-    hash = hashlib.sha1('|'.join((metric.database, metric.measurement, metric.field)).encode('utf-8'))
-    return (hash.hexdigest())[0:4]
+    hash_ = hashlib.sha1('|'.join((metric.database, metric.measurement, metric.field)).encode('utf-8'))
+    return (hash_.hexdigest())[0:4]
 
 
-if __name__ == '__main__':
-    # mac - some uniq sequince of a-z 0-9
+def main():
+    # mac - some uniq sequince of [a-z0-9]
     mac = os.getenv('MAC', '{:012x}'.format(getnode())[0:12])
 
-    # measurements to send
-    measurements = [
+    metrics = [
         Metric(database='weather', measurement='weather', field='humidity', nm_metric_type='H1'),
         Metric(database='weather', measurement='weather', field='pressure', nm_metric_type='P1'),
         Metric(database='weather', measurement='weather', field='temperature', nm_metric_type='T1'),
@@ -85,11 +84,24 @@ if __name__ == '__main__':
     port = int(os.getenv('INFLUXDB_PORT', 8086))
     user = os.getenv('INFLUXDB_USER', 'root')
     password = os.getenv('INFLUXDB_PASSWORD')
-    try:
-        client = influxdb.InfluxDBClient(host, port, user, password)
-        client.query('show databases')
-    except Exception as e:
-        sys.stderr.write('Unable to connect to influxdb\n{}\n'.format(e))
-        sys.exit(2)
-    result = send_measurements(mac, measurements, client, time_range)
-    sys.exit(0 if result else 1)
+
+    cmd = sys.argv[1] if len(sys.argv) > 0 else 'send'
+    if cmd == 'send':
+        try:
+            client = influxdb.InfluxDBClient(host, port, user, password)
+            client.query('show databases')
+        except Exception as e:
+            sys.stderr.write('Unable to connect to influxdb\n{}\n'.format(e))
+            sys.exit(2)
+        result = send_metrics(mac, metrics, client, time_range)
+        sys.exit(0 if result else 1)
+    elif cmd == 'info':
+        print('MAC: {}'.format(mac))
+
+        print('Metrics:')
+        for metric in metrics:
+            id_ = _metric_id(metric)
+            print(' * {}: {}'.format(id_, metric))
+
+if __name__ == '__main__':
+    main()
