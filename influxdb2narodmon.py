@@ -4,38 +4,66 @@ import os
 import collections
 import sys
 from uuid import getnode
+import socket
+import hashlib
 
 import influxdb
 
+__version__ = '0.1'
+
 # see setup at the end of the file
-from influxdb.exceptions import InfluxDBClientError
 
-Measurement = collections.namedtuple('Measurement', ['database', 'measurement', 'field', 'nm_metric_type'])
+Metric = collections.namedtuple('Measurement', ['database', 'measurement', 'field', 'nm_metric_type'])
 
 
-def send_measurements(measurements, influxdb_client, time_range, narodmon_host='narodmon.ru', narodmon_port=8283):
+def send_measurements(mac, metrics, influxdb_client, time_range, narodmon_host='narodmon.ru', narodmon_port=8283):
 
     results = {}
-    for measurement in measurements:
+    for metric in metrics:
         query = 'select mean("{f}") as "value" from "{m}" where time > now() - {r}'.format(
-            f=_quote_itentifier(measurement.field),
-            m=_quote_itentifier(measurement.measurement),
+            f=_quote_itentifier(metric.field),
+            m=_quote_itentifier(metric.measurement),
             r=time_range
         )
-        query_result = influxdb_client.query(query, database=measurement.database)
+        query_result = influxdb_client.query(query, database=metric.database)
         row = next(query_result.get_points(), None)
         if row is not None:
-            results[measurement] = row['value']
+            results[metric] = row['value']
         else:
-            sys.stderr.write('No value for {}\n'.format(measurement))
-    print('\n'.join('{}: {}'.format(k, v) for k, v in results.items()))
+            sys.stderr.write('No value for {}\n'.format(metric))
+    sock = socket.socket()
+    try:
+        sock.connect((narodmon_host, narodmon_port))
 
-    # TODO: send data to narodmon
+        lines = ['#{}'.format(mac)]
+        for metric, value in results.items():
+            metric_id = _metric_id(metric)
+            if isinstance(value, float):
+                value = '{:0.4f}'.format(value)
+            else:
+                value = str(value)
+            lines.append('#{mac}{id}#{value}'.format(mac=mac, id=metric_id, value=value))
+        lines.append('##')
+
+        data = '\n'.join(lines)
+        sock.send(data.encode('utf-8'))
+        response = sock.recv(1024)
+        sock.close()
+        print(response)
+    except socket.error as e:
+        sys.stderr.write('Unable to write data to narodmon\n{}\n'.format(e))
+        return False
     return True
 
 
 def _quote_itentifier(value):
     return value.replace('"', '\\"')
+
+
+def _metric_id(metric):
+    hash = hashlib.sha1('|'.join((metric.database, metric.measurement, metric.field)).encode('utf-8'))
+    return (hash.hexdigest())[0:4]
+
 
 if __name__ == '__main__':
     # mac - some uniq sequince of a-z 0-9
@@ -43,9 +71,9 @@ if __name__ == '__main__':
 
     # measurements to send
     measurements = [
-        Measurement(database='weather', measurement='weather', field='humidity', nm_metric_type='H1'),
-        Measurement(database='weather', measurement='weather', field='pressure', nm_metric_type='P1'),
-        Measurement(database='weather', measurement='unknown', field='unknown', nm_metric_type='P1'),
+        Metric(database='weather', measurement='weather', field='humidity', nm_metric_type='H1'),
+        Metric(database='weather', measurement='weather', field='pressure', nm_metric_type='P1'),
+        Metric(database='weather', measurement='weather', field='temperature', nm_metric_type='T1'),
     ]
 
     time_range = '5m'
@@ -61,5 +89,5 @@ if __name__ == '__main__':
     except Exception as e:
         sys.stderr.write('Unable to connect to influxdb\n{}\n'.format(e))
         sys.exit(2)
-    result = send_measurements(measurements, client, time_range)
+    result = send_measurements(mac, measurements, client, time_range)
     sys.exit(0 if result else 1)
