@@ -30,6 +30,9 @@ def send_metrics(mac, metrics, influxdb_client, time_range, narodmon_host='narod
             results[metric] = row['value']
         else:
             sys.stderr.write('No value for {}\n'.format(metric))
+    if len(results) == 0:
+        sys.stderr.write('Nothing to write to narodmon\n')
+        return False
     sock = socket.socket()
     try:
         sock.connect((narodmon_host, narodmon_port))
