@@ -15,22 +15,37 @@ __version__ = '0.1.3'
 Metric = collections.namedtuple('Measurement', ['nm_metric_id', 'database', 'measurement', 'field'])
 
 
-def send_metrics(mac, metrics, influxdb_client, time_range, narodmon_host='narodmon.ru', narodmon_port=8283):
+def collect_metrics(metrics_specs, influxdb_client, time_range, fill_range):
 
     results = collections.OrderedDict()
-    for metric in metrics:
-        query = 'select mean("{f}") as "value" from "{m}" where time > now() - {r}'.format(
+    for metric in metrics_specs:
+        query =(
+            'select mean("{f}") as "value" from "{m}" '
+            'where time > now() - {fill}m '
+            'group by time({r}m) '
+            'order by time desc '
+            'limit {limit}').format(
             f=_quote_itentifier(metric.field),
             m=_quote_itentifier(metric.measurement),
-            r=time_range
+            fill=fill_range,
+            r=time_range,
+            limit=max(fill_range // time_range, 1)
         )
         query_result = influxdb_client.query(query, database=metric.database)
-        row = next(query_result.get_points(), None)
-        if row is not None:
-            results[metric] = row['value']
+        matched_row = None
+        for row in query_result.get_points():
+            if row['value'] is not None:
+                matched_row = row
+                break
+        if matched_row is not None:
+            results[metric] = matched_row['value']
         else:
             sys.stderr.write('No value for {}\n'.format(metric))
-    if len(results) == 0:
+    return results
+
+
+def send_metrics(mac, metrics, narodmon_host='narodmon.ru', narodmon_port=8283):
+    if len(metrics) == 0:
         sys.stderr.write('Nothing to write to narodmon\n')
         return False
     sock = socket.socket()
@@ -38,7 +53,7 @@ def send_metrics(mac, metrics, influxdb_client, time_range, narodmon_host='narod
         sock.connect((narodmon_host, narodmon_port))
 
         lines = ['#{}'.format(mac)]
-        for metric, value in results.items():
+        for metric, value in metrics.items():
             if isinstance(value, float):
                 value = '{:0.4f}'.format(value)
             else:
@@ -67,13 +82,14 @@ def main():
     # mac - some uniq sequince of [a-z0-9]
     mac = os.getenv('MAC', '{:012x}'.format(getnode())[0:12])
 
-    metrics = [
-        Metric(nm_metric_id='H1', database='weather', measurement='weather', field='humidity'),
-        Metric(nm_metric_id='P1', database='weather', measurement='weather', field='pressure'),
-        Metric(nm_metric_id='T1', database='weather', measurement='weather', field='temperature'),
+    metrics_specs = [
+        Metric(nm_metric_id='H1', database='weather2', measurement='humidity', field='relative'),
+        Metric(nm_metric_id='P1', database='weather2', measurement='pressure', field='hpa'),
+        Metric(nm_metric_id='T1', database='weather2', measurement='temperature', field='celsius'),
     ]
 
-    time_range = '5m'
+    time_range = 5
+    fill_range = 60
 
     # influxdb connection settings
     host = os.getenv('INFLUXDB_HOST', 'localhost')
@@ -89,13 +105,14 @@ def main():
         except Exception as e:
             sys.stderr.write('Unable to connect to influxdb\n{}\n'.format(e))
             sys.exit(2)
-        result = send_metrics(mac, metrics, client, time_range)
-        sys.exit(0 if result else 1)
+        metrics = collect_metrics(metrics_specs, client, time_range, fill_range)
+        sent = send_metrics(mac, metrics)
+        sys.exit(0 if sent else 1)
     elif cmd == 'info':
         print('MAC: {}'.format(mac))
 
         print('Metrics:')
-        for metric in metrics:
+        for metric in metrics_specs:
             print(' * {}: {}'.format(metric.nm_metric_id, metric))
 
 
